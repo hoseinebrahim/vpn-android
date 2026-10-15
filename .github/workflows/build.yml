@@ -1,4 +1,4 @@
-name: Build SocksTun TCP VPN APK
+name: Build SocksTun APK
 
 on:
   workflow_dispatch:
@@ -11,68 +11,72 @@ permissions:
 
 jobs:
   build:
-    name: Build Android VPN client
+    name: Build Android APK
     runs-on: ubuntu-latest
     timeout-minutes: 45
 
     steps:
-      - name: Checkout this repository
-        uses: actions/checkout@v4
-
       - name: Set up Java 17
         uses: actions/setup-java@v4
         with:
           distribution: temurin
-          java-version: '17'
+          java-version: "17"
 
-      - name: Download SocksTun source with submodules
-        run: git clone --depth 1 --recurse-submodules https://github.com/heiher/sockstun.git android-client
-
-      - name: Build APK using SocksTun's Android build setup
-        working-directory: android-client
-        shell: bash
+      - name: Install build tools
         run: |
-          set -eu
-
           sudo apt-get update
-          sudo apt-get install -y wget unzip file
+          sudo apt-get install -y wget unzip file git
 
+      - name: Download SocksTun source
+        run: |
+          git clone --depth 1 --recurse-submodules \
+            https://github.com/heiher/sockstun.git \
+            android-client
+
+      - name: Set up Android command-line tools
+        working-directory: android-client
+        run: |
           wget --tries=3 --timeout=30 \
             https://dl.google.com/android/repository/commandlinetools-linux-13114758_latest.zip \
             -O commandline-tools.zip
 
           mkdir -p sdk
-          unzip -q -o commandline-tools.zip -d sdk
+          unzip -q commandline-tools.zip -d sdk
+
+      - name: Accept Android SDK licenses
+        working-directory: android-client
+        shell: bash
+        run: |
+          export ANDROID_HOME="$PWD/sdk"
+          export ANDROID_SDK_ROOT="$ANDROID_HOME"
+
+          yes | "$ANDROID_HOME/cmdline-tools/bin/sdkmanager" \
+            --sdk_root="$ANDROID_HOME" --licenses
+
+      - name: Build release APK
+        working-directory: android-client
+        shell: bash
+        run: |
+          set -eu
 
           export ANDROID_HOME="$PWD/sdk"
           export ANDROID_SDK_ROOT="$ANDROID_HOME"
 
-          SDKMANAGER="$ANDROID_HOME/cmdline-tools/bin/sdkmanager"
-          if [ ! -x "$SDKMANAGER" ]; then
-            echo "Android sdkmanager not found at: $SDKMANAGER"
-            find sdk -maxdepth 4 -type f -name sdkmanager -print
-            exit 1
-          fi
-
-          yes | "$SDKMANAGER" --sdk_root="$ANDROID_HOME" --licenses
-
-          "$SDKMANAGER" --sdk_root="$ANDROID_HOME" \
-            "platform-tools" \
-            "platforms;android-34" \
-            "build-tools;34.0.0" \
-            "ndk;29.0.14206865"
-
           chmod +x ./gradlew
-          ./gradlew --no-daemon --stacktrace assembleRelease
+          ./gradlew --no-daemon assembleRelease
 
-          APK_PATH="$(find app/build/outputs/apk/release -maxdepth 1 -type f -name '*.apk' -print -quit)"
+          APK_PATH="$(find app/build/outputs/apk/release \
+            -type f -name '*.apk' -print -quit)"
+
           if [ -z "$APK_PATH" ]; then
-            echo "No release APK was generated."
+            echo "::error::APK file was not generated."
             exit 1
           fi
-          cp "$APK_PATH" ../SocksTun-release.apk
+
+          cp "$APK_PATH" "$GITHUB_WORKSPACE/SocksTun-release.apk"
 
       - name: Upload APK artifact
+        if: success()
         uses: actions/upload-artifact@v4
         with:
           name: SocksTun-release-apk
