@@ -1,50 +1,81 @@
-
-name: Build TCP SOCKS5 VPN APK
+name: Build SocksTun TCP VPN APK
 
 on:
   workflow_dispatch:
+  push:
+    branches:
+      - main
 
 permissions:
   contents: read
 
 jobs:
   build:
-    name: Build Android VPN Client
+    name: Build Android VPN client
     runs-on: ubuntu-latest
     timeout-minutes: 45
 
     steps:
+      - name: Checkout this repository
+        uses: actions/checkout@v4
+
       - name: Set up Java 17
         uses: actions/setup-java@v4
         with:
           distribution: temurin
-          java-version: "17"
+          java-version: '17'
 
-      - name: Set up Android SDK
-        uses: android-actions/setup-android@v4
-        with:
-          packages: |
-            platform-tools
-            platforms;android-34
-            build-tools;34.0.0
-            ndk;29.0.14206865
+      - name: Download SocksTun source with submodules
+        run: git clone --depth 1 --recurse-submodules https://github.com/heiher/sockstun.git android-client
 
-      - name: Download Android VPN project
-        run: |
-          git clone --depth 1 --recurse-submodules \
-            https://github.com/heiher/sockstun.git \
-            android-client
-
-      - name: Build APK
+      - name: Build APK using SocksTun's Android build setup
         working-directory: android-client
+        shell: bash
         run: |
-          chmod +x gradlew
-          ./gradlew --no-daemon --stacktrace assembleDebug
+          set -eu
 
-      - name: Upload APK
+          sudo apt-get update
+          sudo apt-get install -y wget unzip file
+
+          wget --tries=3 --timeout=30 \
+            https://dl.google.com/android/repository/commandlinetools-linux-13114758_latest.zip \
+            -O commandline-tools.zip
+
+          mkdir -p sdk
+          unzip -q -o commandline-tools.zip -d sdk
+
+          export ANDROID_HOME="$PWD/sdk"
+          export ANDROID_SDK_ROOT="$ANDROID_HOME"
+
+          SDKMANAGER="$ANDROID_HOME/cmdline-tools/bin/sdkmanager"
+          if [ ! -x "$SDKMANAGER" ]; then
+            echo "Android sdkmanager not found at: $SDKMANAGER"
+            find sdk -maxdepth 4 -type f -name sdkmanager -print
+            exit 1
+          fi
+
+          yes | "$SDKMANAGER" --sdk_root="$ANDROID_HOME" --licenses
+
+          "$SDKMANAGER" --sdk_root="$ANDROID_HOME" \
+            "platform-tools" \
+            "platforms;android-34" \
+            "build-tools;34.0.0" \
+            "ndk;29.0.14206865"
+
+          chmod +x ./gradlew
+          ./gradlew --no-daemon --stacktrace assembleRelease
+
+          APK_PATH="$(find app/build/outputs/apk/release -maxdepth 1 -type f -name '*.apk' -print -quit)"
+          if [ -z "$APK_PATH" ]; then
+            echo "No release APK was generated."
+            exit 1
+          fi
+          cp "$APK_PATH" ../SocksTun-release.apk
+
+      - name: Upload APK artifact
         uses: actions/upload-artifact@v4
         with:
-          name: TCP-SOCKS5-VPN-APK
-          path: android-client/app/build/outputs/apk/debug/*.apk
+          name: SocksTun-release-apk
+          path: SocksTun-release.apk
           if-no-files-found: error
           retention-days: 7
