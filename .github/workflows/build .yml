@@ -1,0 +1,95 @@
+name: Build SocksTun APK
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - main
+
+permissions:
+  contents: read
+
+env:
+  ANDROID_HOME: ${{ github.workspace }}/android-sdk
+  ANDROID_SDK_ROOT: ${{ github.workspace }}/android-sdk
+
+jobs:
+  build:
+    name: Build Android APK
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+
+    steps:
+      - name: Set up Java 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - name: Install build tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y wget unzip file git
+
+      - name: Download SocksTun source
+        run: |
+          git clone --depth 1 --recurse-submodules --shallow-submodules \
+            https://github.com/heiher/sockstun.git \
+            android-client
+
+      - name: Set up Android command-line tools
+        run: |
+          set -eu
+          wget --tries=3 --timeout=30 \
+            https://dl.google.com/android/repository/commandlinetools-linux-13114758_latest.zip \
+            -O commandline-tools.zip
+
+          # sdkmanager must live in <sdk>/cmdline-tools/latest/bin
+          mkdir -p "$ANDROID_HOME/cmdline-tools"
+          unzip -q commandline-tools.zip -d "$ANDROID_HOME/cmdline-tools"
+          mv "$ANDROID_HOME/cmdline-tools/cmdline-tools" "$ANDROID_HOME/cmdline-tools/latest"
+
+      - name: Accept Android SDK licenses
+        shell: bash
+        run: |
+          set +o pipefail
+          yes | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" \
+            --sdk_root="$ANDROID_HOME" --licenses > /dev/null || true
+
+          # Verify that the licenses were actually accepted
+          test -d "$ANDROID_HOME/licenses"
+          ls "$ANDROID_HOME/licenses"
+
+      - name: Install SDK packages
+        shell: bash
+        run: |
+          set -eu
+          "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" \
+            --sdk_root="$ANDROID_HOME" "platform-tools"
+
+      - name: Build debug APK
+        working-directory: android-client
+        shell: bash
+        run: |
+          set -eu
+
+          chmod +x ./gradlew
+          ./gradlew --no-daemon assembleDebug
+
+          APK_PATH="$(find app/build/outputs/apk -type f -name '*.apk' -print -quit)"
+
+          if [ -z "$APK_PATH" ]; then
+            echo "::error::APK file was not generated."
+            exit 1
+          fi
+
+          cp "$APK_PATH" "$GITHUB_WORKSPACE/SocksTun-debug.apk"
+
+      - name: Upload APK artifact
+        if: success()
+        uses: actions/upload-artifact@v4
+        with:
+          name: SocksTun-debug-apk
+          path: SocksTun-debug.apk
+          if-no-files-found: error
+          retention-days: 7
