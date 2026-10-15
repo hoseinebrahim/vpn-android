@@ -1,5 +1,5 @@
 
-name: Build Android APK
+name: Build TCP SOCKS5 VPN APK
 
 on:
   workflow_dispatch:
@@ -9,14 +9,11 @@ permissions:
 
 jobs:
   build:
-    name: Build Debug APK
+    name: Build Android VPN Client
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 45
 
     steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
-
       - name: Set up Java 17
         uses: actions/setup-java@v4
         with:
@@ -26,42 +23,28 @@ jobs:
       - name: Set up Android SDK
         uses: android-actions/setup-android@v4
         with:
-          packages: platform-tools
+          packages: |
+            platform-tools
+            platforms;android-34
+            build-tools;34.0.0
+            ndk;29.0.14206865
 
-      - name: Check and build Android project
-        shell: bash
+      - name: Download Android VPN project
         run: |
-          set -euo pipefail
+          git clone --depth 1 --recurse-submodules \
+            https://github.com/heiher/sockstun.git \
+            android-client
 
-          echo "Checking for Gradle wrapper..."
+      - name: Build APK
+        working-directory: android-client
+        run: |
+          chmod +x gradlew
+          ./gradlew --no-daemon --stacktrace assembleDebug
 
-          WRAPPER="$(find . -type f -name gradlew \
-            -not -path './.git/*' -print -quit)"
-
-          if [[ -z "$WRAPPER" ]]; then
-            echo "::error::No Gradle wrapper found."
-            echo "An Android Gradle project is required."
-            echo "The Python proxy must first be integrated with Android VpnService."
-            exit 1
-          fi
-
-          PROJECT_DIR="$(dirname "$WRAPPER")"
-
-          echo "Gradle project: $PROJECT_DIR"
-
-          chmod +x "$WRAPPER"
-
-          cd "$PROJECT_DIR"
-
-          ./gradlew --no-daemon \
-            --stacktrace \
-            assembleDebug
-
-      - name: Upload APK artifact
-        if: success()
+      - name: Upload APK
         uses: actions/upload-artifact@v4
         with:
-          name: vpn-android-debug-apk
-          path: "**/build/outputs/apk/**/*.apk"
+          name: TCP-SOCKS5-VPN-APK
+          path: android-client/app/build/outputs/apk/debug/*.apk
           if-no-files-found: error
           retention-days: 7
